@@ -1,0 +1,20 @@
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+---
+
+ca_name: SampleCA
+ca_admin_enrollment_id: admin
+ca_admin_enrollment_secret: adminpw
+
+ordering_org_name: OrderingOrg
+ordering_org_msp_id: OrderingOrgMSP
+ordering_service_name: OrderingService
+
+sample_org_name: SampleOrg
+sample_org_msp_id: SampleOrgMSP
+sample_org_peer_name: SampleOrgPeer
+
+channel_name: mychannel
+
+wait_timeout: 3600

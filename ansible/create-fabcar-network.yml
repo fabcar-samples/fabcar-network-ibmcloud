@@ -1,0 +1,258 @@
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# IBP collection for Ansible documentation
+# https://ibm-blockchain.github.io/ansible-collection/
+#
+---
+- name: Create a sample FabCar IBP network
+  hosts: localhost
+
+  vars_files:
+    - ibp-credentials.yml
+    - fabcar-network-vars.yml
+
+  roles:
+    - role: ibm.blockchain_platform.ordering_organization
+      vars:
+        state: present
+        organization_name: "{{ ordering_org_name }}"
+        organization_msp_id: "{{ ordering_org_msp_id }}"
+        organization_admin_enrollment_id: orderingorgadmin
+        organization_admin_enrollment_secret: orderingorgadminpw
+        ordering_service_enrollment_id: orderingorgorderer
+        ordering_service_enrollment_secret: orderingorgordererpw
+
+    - role: ibm.blockchain_platform.endorsing_organization
+      vars:
+        state: present
+        organization_name: "{{ sample_org_name }}"
+        organization_msp_id: "{{ sample_org_msp_id }}"
+        organization_admin_enrollment_id: sampleorgadmin
+        organization_admin_enrollment_secret: sampleorgadminpw
+        peer_enrollment_id: sampleorgpeer
+        peer_enrollment_secret: sampleorgpeerpw
+        peer_name: "{{ sample_org_peer_name }}"
+        peer_version: "2.1.1-3"
+
+  tasks:
+    - name: Get the ordering service information
+      ibm.blockchain_platform.ordering_service_info:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        name: "{{ ordering_service_name }}"
+      register: ordering_service
+
+    - name: Fail if the ordering service does not exist
+      fail:
+        msg: "{{ ordering_service_name }} does not exist"
+      when: not ordering_service.exists
+
+    - name: Fetch the system channel configuration
+      ibm.blockchain_platform.channel_config:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        ordering_service: "{{ ordering_service_name }}"
+        identity: "{{ ordering_org_name }} Admin.json"
+        msp_id: "{{ ordering_org_msp_id }}"
+        operation: fetch
+        name: "{{ ordering_service.ordering_service[0].system_channel_id }}"
+        path: original_config.bin
+
+    - name: Create a copy of the system channel configuration
+      copy:
+        src: original_config.bin
+        dest: updated_config.bin
+
+    - name: Add the organization to the consortium
+      ibm.blockchain_platform.consortium_member:
+        state: present
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        organization: "{{ sample_org_name }}"
+        path: updated_config.bin
+
+    - name: Compute the system channel configuration update
+      ibm.blockchain_platform.channel_config:
+        operation: compute_update
+        name: "{{ ordering_service.ordering_service[0].system_channel_id }}"
+        original: original_config.bin
+        updated: updated_config.bin
+        path: config_update.bin
+      register: compute_update
+
+    - name: Sign the system channel configuration update
+      ibm.blockchain_platform.channel_config:
+        operation: sign_update
+        identity: "{{ ordering_org_name }} Admin.json"
+        msp_id: "{{ ordering_org_msp_id }}"
+        name: "{{ ordering_service.ordering_service[0].system_channel_id }}"
+        path: config_update.bin
+      when: compute_update.path
+
+    - name: Apply the system channel configuration update
+      ibm.blockchain_platform.channel_config:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        operation: apply_update
+        ordering_service: "{{ ordering_service_name }}"
+        identity: "{{ ordering_org_name }} Admin.json"
+        msp_id: "{{ ordering_org_msp_id }}"
+        name: "{{ ordering_service.ordering_service[0].system_channel_id }}"
+        path: config_update.bin
+      when: compute_update.path
+
+    - name: Check to see if the channel already exists
+      ibm.blockchain_platform.channel_block:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        operation: fetch
+        ordering_service: "{{ ordering_service_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        name: "{{ channel_name }}"
+        target: "0"
+        path: channel_genesis_block.bin
+      failed_when: False
+      register: result
+
+    - name: Fail on any error other than the channel not existing
+      fail:
+        msg: "{{ result.msg }}"
+      when: result.msg is defined and 'NOT_FOUND' not in result.msg
+
+    - name: Create the policies for the new channel
+      template:
+        src: "fabcar-policy-template.json.j2"
+        dest: "{{ item.dest }}"
+        mode: 0664
+      with_items:
+        - {role: 'ADMIN', dest: 'admins-policy.json'}
+        - {role: 'MEMBER', dest: 'readers-policy.json'}
+        - {role: 'MEMBER', dest: 'writers-policy.json'}
+
+    - name: Create the configuration update for the new channel
+      ibm.blockchain_platform.channel_config:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        operation: create
+        name: "{{ channel_name }}"
+        path: config_update.bin
+        organizations:
+          - "{{ sample_org_name }}"
+        policies:
+          Admins: "admins-policy.json"
+          Readers: "readers-policy.json"
+          Writers: "writers-policy.json"
+      when: result.msg is defined and 'NOT_FOUND' in result.msg
+
+    - name: Sign the channel configuration update for the new channel
+      ibm.blockchain_platform.channel_config:
+        operation: sign_update
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        name: "{{ channel_name }}"
+        path: config_update.bin
+      when: result.msg is defined and 'NOT_FOUND' in result.msg
+
+    - name: Apply the channel configuration update for the new channel
+      ibm.blockchain_platform.channel_config:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        operation: apply_update
+        ordering_service: "{{ ordering_service_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        name: "{{ channel_name }}"
+        path: config_update.bin
+      when: result.msg is defined and 'NOT_FOUND' in result.msg
+
+    - name: Fetch the genesis block for the channel
+      ibm.blockchain_platform.channel_block:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        operation: fetch
+        ordering_service: "{{ ordering_service_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        name: "{{ channel_name }}"
+        target: "0"
+        path: channel_genesis_block.bin
+
+    - name: Join the peer to the channel
+      ibm.blockchain_platform.peer_channel:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        operation: join
+        peer: "{{ sample_org_peer_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        path: channel_genesis_block.bin
+
+    - name: Fetch the channel configuration
+      ibm.blockchain_platform.channel_config:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        ordering_service: "{{ ordering_service_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        operation: fetch
+        name: "{{ channel_name }}"
+        path: original_config.bin
+
+    - name: Create a copy of the channel configuration
+      copy:
+        src: original_config.bin
+        dest: updated_config.bin
+
+    - name: Update the organization
+      ibm.blockchain_platform.channel_member:
+        state: present
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        organization: "{{ sample_org_name }}"
+        anchor_peers:
+          - "{{ sample_org_peer_name }}"
+        path: updated_config.bin
+
+    - name: Compute the channel configuration update
+      ibm.blockchain_platform.channel_config:
+        operation: compute_update
+        name: "{{ channel_name }}"
+        original: original_config.bin
+        updated: updated_config.bin
+        path: config_update.bin
+      register: compute_update
+
+    - name: Sign the channel configuration update
+      ibm.blockchain_platform.channel_config:
+        operation: sign_update
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        name: "{{ channel_name }}"
+        path: config_update.bin
+      when: compute_update.path
+
+    - name: Apply the channel configuration update
+      ibm.blockchain_platform.channel_config:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        operation: apply_update
+        ordering_service: "{{ ordering_service_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        name: "{{ channel_name }}"
+        path: config_update.bin
+      when: compute_update.path

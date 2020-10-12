@@ -1,0 +1,8 @@
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+---
+
+smart_contract_name: "fabcar"
+smart_contract_version: "1"
+smart_contract_package: "fabcar.cds"

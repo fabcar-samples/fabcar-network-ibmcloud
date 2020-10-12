@@ -1,0 +1,53 @@
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# IBP collection for Ansible documentation
+# https://ibm-blockchain.github.io/ansible-collection/
+#
+---
+- name: Install chaincode
+  hosts: localhost
+
+  vars_files:
+    - ibp-credentials.yml
+    - fabcar-network-vars.yml
+    - fabcar-chaincode-vars.yml
+
+  tasks:
+    - name: Install the chaincode on the peer
+      ibm.blockchain_platform.installed_chaincode:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        peer: "{{ sample_org_peer_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        path: "{{ smart_contract_package }}"
+
+    - name: Instantiate the chaincode on the channel
+      ibm.blockchain_platform.instantiated_chaincode:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        peer: "{{ sample_org_peer_name }}"
+        identity: "{{ sample_org_name }} Admin.json"
+        msp_id: "{{ sample_org_msp_id }}"
+        channel: "{{ channel_name }}"
+        name: "{{ smart_contract_name }}"
+        constructor:
+          function: "{{ smart_contract_constructor | default(omit) }}"
+        version: "{{ smart_contract_version }}"
+        endorsement_policy: "{{ smart_contract_endorsement_policy | default(omit) }}"
+        collections_config: "{{ smart_contract_collections_file | default(omit) }}"
+
+    - name: Create a connection profile
+      ibm.blockchain_platform.connection_profile:
+        api_endpoint: "{{ api_endpoint }}"
+        api_authtype: "{{ api_authtype }}"
+        api_key: "{{ api_key }}"
+        name: "{{ sample_org_name }} Gateway"
+        path: "{{ sample_org_name }} Gateway.json"
+        organization: "{{ sample_org_name }}"
+        certificate_authority: "{{ ca_name }}"
+        peers:
+          - "{{ sample_org_peer_name }}"
