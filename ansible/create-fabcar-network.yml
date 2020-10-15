@@ -9,7 +9,7 @@
   hosts: localhost
 
   vars_files:
-    - ibp-credentials.yml
+    - ibmcloud-credentials.yml
     - fabcar-network-vars.yml
 
   roles:
