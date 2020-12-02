@@ -1,3 +1,6 @@
 ibmcloud-credentials.yml
 ansible/*.bin
 ansible/*.json
+*.cds
+
+.DS_Store
